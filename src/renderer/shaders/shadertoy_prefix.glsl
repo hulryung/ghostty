@@ -19,6 +19,7 @@ layout(binding = 1, std140) uniform Globals {
     uniform int   iPreviousCursorStyle;
     uniform int   iCursorVisible;
     uniform float iTimeCursorChange;
+    uniform vec2  iPendingScroll;
     uniform float iTimeFocus;
     uniform int iFocus;
     uniform vec3  iPalette[256];

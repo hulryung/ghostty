@@ -760,6 +760,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .previous_cursor_style = 0,
                     .cursor_visible = 0,
                     .cursor_change_time = 0,
+                    .pending_scroll = @splat(0),
                     .time_focus = 0,
                     .focus = 1, // assume focused initially
                     .palette = @splat(@splat(0)),
@@ -2219,6 +2220,23 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 uniforms.time_focus = uniforms.time;
                 self.custom_shader_focused_changed = false;
             }
+
+            // Smooth scroll: pass pending_scroll_y to shader
+            const surface: *Surface = @fieldParentPtr("renderer", self);
+            var pending_y = surface.mouse.pending_scroll_y;
+            if (pending_y != 0) {
+                if (surface.io.terminal.flags.mouse_event != .none) {
+                    pending_y = 0;
+                } else {
+                    const top_left = surface.io.terminal.screens.active.pages.getTopLeft(.viewport);
+                    if (pending_y > 0 and top_left.up(1) == null) pending_y = 0;
+                    if (pending_y < 0 and surface.io.terminal.screens.active.pages.pinIsActive(top_left)) pending_y = 0;
+                }
+            }
+            uniforms.pending_scroll = .{
+                0,
+                @floatCast(pending_y),
+            };
         }
 
         /// Build the overlay as configured. Returns null if there is no

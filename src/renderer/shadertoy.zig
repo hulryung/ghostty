@@ -28,6 +28,7 @@ pub const Uniforms = extern struct {
     previous_cursor_style: i32 align(4),
     cursor_visible: i32 align(4),
     cursor_change_time: f32 align(4),
+    pending_scroll: [2]f32 align(8),
     time_focus: f32 align(4),
     focus: i32 align(4),
     palette: [256][4]f32 align(16),
