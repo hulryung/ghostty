@@ -3385,7 +3385,7 @@ pub fn scrollCallback(
     yoff: f64,
     scroll_mods: input.ScrollMods,
 ) !void {
-    // log.info("SCROLL: xoff={d:.2} yoff={d:.2} precision={} momentum={} pending_y={d:.2}", .{ xoff, yoff, scroll_mods.precision, scroll_mods.momentum, self.mouse.pending_scroll_y });
+    // log.info("SCROLL: xoff={} yoff={} mods={}", .{ xoff, yoff, scroll_mods });
 
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
