@@ -252,6 +252,9 @@ pub const Uniforms = extern struct {
         use_linear_correction: bool align(1) = false,
     },
 
+    /// The sub-cell vertical scroll offset in pixels for smooth scrolling.
+    pending_scroll_y: f32 align(4) = 0,
+
     const PaddingExtend = packed struct(u8) {
         left: bool = false,
         right: bool = false,
@@ -259,6 +262,7 @@ pub const Uniforms = extern struct {
         down: bool = false,
         _padding: u4 = 0,
     };
+
 };
 
 /// This is a single parameter for the terminal cell shader.

@@ -40,6 +40,12 @@ pub const Mouse = struct {
     /// This could really just be mods in general and we probably will
     /// move it out of mouse state at some point.
     mods: inputpkg.Mods = .{},
+
+    /// The sub-cell scroll offset in pixels for smooth scrolling.
+    /// This is the fractional remainder after whole-cell scrolls are
+    /// consumed, representing how far into the next cell the viewport
+    /// has been scrolled.
+    pending_scroll_y: f32 = 0,
 };
 
 /// The pre-edit state. See Surface.preeditCallback for more information.

@@ -86,7 +86,8 @@ pub const Contents = struct {
     ) Allocator.Error!void {
         self.size = size;
 
-        const cell_count = @as(usize, size.columns) * @as(usize, size.rows);
+        // Allocate 2 extra rows for smooth scroll trailing edges (above + below).
+        const cell_count = @as(usize, size.columns) * @as(usize, size.rows + 2);
 
         const bg_cells = try alloc.alloc(shaderpkg.CellBg, cell_count);
         errdefer alloc.free(bg_cells);
@@ -102,12 +103,14 @@ pub const Contents = struct {
         // form a single grapheme, and multi-substitutions in fonts, the number
         // of glyphs in a row is theoretically unlimited.
         //
-        // We have size.rows + 2 lists because indexes 0 and size.rows - 1 are
-        // used for special lists containing the cursor cell which need to
-        // be first and last in the buffer, respectively.
+        // We have size.rows + 4 lists:
+        //   0                = cursor-before list
+        //   1 .. rows        = normal viewport rows
+        //   rows+1, rows+2   = smooth scroll extra rows (below, above)
+        //   rows+3           = cursor-after list
         var fg_rows: ArrayListCollection(shaderpkg.CellText) = try .init(
             alloc,
-            size.rows + 2,
+            size.rows + 4,
             size.columns * 3,
         );
         errdefer fg_rows.deinit(alloc);
@@ -118,8 +121,8 @@ pub const Contents = struct {
         // waste the memory.
         fg_rows.lists[0].deinit(alloc);
         fg_rows.lists[0] = try .initCapacity(alloc, 1);
-        fg_rows.lists[size.rows + 1].deinit(alloc);
-        fg_rows.lists[size.rows + 1] = try .initCapacity(alloc, 1);
+        fg_rows.lists[size.rows + 3].deinit(alloc);
+        fg_rows.lists[size.rows + 3] = try .initCapacity(alloc, 1);
 
         // Perform the swap, no going back from here.
         errdefer comptime unreachable;
@@ -143,7 +146,7 @@ pub const Contents = struct {
     ) void {
         if (self.size.rows == 0) return;
         self.fg_rows.lists[0].clearRetainingCapacity();
-        self.fg_rows.lists[self.size.rows + 1].clearRetainingCapacity();
+        self.fg_rows.lists[self.size.rows + 3].clearRetainingCapacity();
 
         const cell = v orelse return;
         const style = cursor_style orelse return;
@@ -152,7 +155,7 @@ pub const Contents = struct {
             // Block cursors should be drawn first
             .block => self.fg_rows.lists[0].appendAssumeCapacity(cell),
             // Other cursor styles should be drawn last
-            .block_hollow, .bar, .underline, .lock => self.fg_rows.lists[self.size.rows + 1].appendAssumeCapacity(cell),
+            .block_hollow, .bar, .underline, .lock => self.fg_rows.lists[self.size.rows + 3].appendAssumeCapacity(cell),
         }
     }
 
@@ -162,8 +165,8 @@ pub const Contents = struct {
         if (self.fg_rows.lists[0].items.len > 0) {
             return self.fg_rows.lists[0].items[0];
         }
-        if (self.fg_rows.lists[self.size.rows + 1].items.len > 0) {
-            return self.fg_rows.lists[self.size.rows + 1].items[0];
+        if (self.fg_rows.lists[self.size.rows + 3].items.len > 0) {
+            return self.fg_rows.lists[self.size.rows + 3].items[0];
         }
         return null;
     }
@@ -189,7 +192,8 @@ pub const Contents = struct {
     ) Allocator.Error!void {
         const y = cell.grid_pos[1];
 
-        assert(y < self.size.rows);
+        // Allow extra rows for smooth scroll (up to +2 beyond viewport).
+        assert(y < self.size.rows + 2);
 
         switch (key) {
             .bg => comptime unreachable,
@@ -207,7 +211,7 @@ pub const Contents = struct {
 
     /// Clear all of the cell contents for a given row.
     pub fn clear(self: *Contents, y: terminal.size.CellCountInt) void {
-        assert(y < self.size.rows);
+        assert(y < self.size.rows + 2);
 
         @memset(self.bg_cells[@as(usize, y) * self.size.columns ..][0..self.size.columns], .{ 0, 0, 0, 0 });
 
@@ -411,7 +415,7 @@ test Contents {
 
     // Add a hollow cursor.
     c.setCursor(cursor_cell, .block_hollow);
-    try testing.expectEqual(cursor_cell, c.fg_rows.lists[rows + 1].items[0]);
+    try testing.expectEqual(cursor_cell, c.fg_rows.lists[rows + 3].items[0]);
     try testing.expectEqual(cursor_cell, c.getCursorGlyph().?);
 }
 

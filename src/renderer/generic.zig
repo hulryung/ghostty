@@ -131,6 +131,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         last_bottom_node: ?usize,
         last_bottom_y: terminal.size.CellCountInt,
 
+        /// The effective sub-cell scroll offset in pixels for smooth scrolling.
+        /// Computed per frame from renderer state with boundary checks applied.
+        pending_scroll_y: f32 = 0,
+
         /// The most recent viewport matches so that we can render search
         /// matches in the visible frame. This is provided asynchronously
         /// from the search thread so we have the dirty flag to also note
@@ -1160,6 +1164,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 preedit: ?renderer.State.Preedit,
                 scrollbar: terminal.Scrollbar,
                 overlay_features: []const Overlay.Feature,
+                pending_scroll_y: f32,
             };
 
             // Update all our data as tightly as possible within the mutex.
@@ -1271,12 +1276,36 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     ) catch &.{};
                 };
 
+                // Compute effective pending scroll Y with boundary checks.
+                // We zero it out when mouse reporting is active or when
+                // at the scroll boundaries (top of scrollback or active area).
+                const pending_scroll_y: f32 = pending_y: {
+                    const raw = state.mouse.pending_scroll_y;
+                    if (raw == 0) break :pending_y 0;
+                    if (state.terminal.flags.mouse_event != .none) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+                    const top_left = state.terminal.screens.active.pages.getTopLeft(.viewport);
+                    if (raw > 0 and top_left.up(1) == null) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+                    if (raw < 0 and state.terminal.screens.active.pages.pinIsActive(top_left)) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+
+                    break :pending_y raw;
+                };
+
                 break :critical .{
                     .links = links,
                     .mouse = state.mouse,
                     .preedit = preedit,
                     .scrollbar = scrollbar,
                     .overlay_features = overlay_features,
+                    .pending_scroll_y = pending_scroll_y,
                 };
             };
 
@@ -1356,6 +1385,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 );
             };
 
+            // Store the effective smooth scroll offset for use in shaders.
+            self.pending_scroll_y = critical.pending_scroll_y;
+
             // Acquire the draw mutex for all remaining state updates.
             {
                 self.draw_mutex.lock();
@@ -1404,6 +1436,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     else => {},
                 };
+
+                // Update smooth scroll offset for cell shaders.
+                self.uniforms.pending_scroll_y = self.pending_scroll_y;
 
                 // Prepare our overlay image for upload (or unload). This
                 // has to use our general allocator since it modifies
@@ -2221,21 +2256,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.custom_shader_focused_changed = false;
             }
 
-            // Smooth scroll: pass pending_scroll_y to shader
-            const surface: *Surface = @fieldParentPtr("renderer", self);
-            var pending_y = surface.mouse.pending_scroll_y;
-            if (pending_y != 0) {
-                if (surface.io.terminal.flags.mouse_event != .none) {
-                    pending_y = 0;
-                } else {
-                    const top_left = surface.io.terminal.screens.active.pages.getTopLeft(.viewport);
-                    if (pending_y > 0 and top_left.up(1) == null) pending_y = 0;
-                    if (pending_y < 0 and surface.io.terminal.screens.active.pages.pinIsActive(top_left)) pending_y = 0;
-                }
-            }
+            // Pass smooth scroll offset to custom shaders.
             uniforms.pending_scroll = .{
                 0,
-                @floatCast(pending_y),
+                self.pending_scroll_y,
             };
         }
 
@@ -2614,6 +2638,47 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     x += if (cp.wide) 2 else 1;
                 }
+            }
+
+            // For smooth scrolling, build extra rows at the edge where the
+            // gap appears. The gap direction depends on pending_scroll_y sign:
+            //   pending < 0: cells shift UP, gap at BOTTOM → need extra below row
+            //   pending > 0: cells shift DOWN, gap at TOP → need extra above row
+            var include_below_row = false;
+            if (self.pending_scroll_y < 0) {
+                // Gap at bottom: build extra row below viewport
+                const below_idx: usize = row_len;
+                if (below_idx < row_data.len and state.has_extra_row[0]) {
+                    const extra_y: terminal.size.CellCountInt = @intCast(below_idx);
+                    self.cells.clear(extra_y);
+                    self.rebuildRow(
+                        extra_y, row_raws[below_idx], &row_cells[below_idx],
+                        null, row_selection[below_idx], &row_highlights[below_idx], links,
+                    ) catch {};
+                    include_below_row = true;
+                }
+            }
+            if (self.pending_scroll_y != 0) {
+                // Gap at top (pending > 0) or always build for above availability.
+                // Stored at grid y = rows+1; the shader maps grid_pos.y == -1 here.
+                const above_idx: usize = row_len + 1;
+                if (above_idx < row_data.len and state.has_extra_row[1]) {
+                    const above_y: terminal.size.CellCountInt = @intCast(above_idx);
+                    self.cells.clear(above_y);
+                    self.rebuildRow(
+                        above_y, row_raws[above_idx], &row_cells[above_idx],
+                        null, row_selection[above_idx], &row_highlights[above_idx], links,
+                    ) catch {};
+                }
+            }
+
+            // Always include the extra below row slot in the grid so the
+            // shader can find the above row BG data at (grid_size.y * cols).
+            // When pending > 0, the below row slot contains zeros (transparent).
+            if (self.pending_scroll_y != 0) {
+                self.uniforms.grid_size[1] = @intCast(row_len + 1);
+            } else {
+                self.uniforms.grid_size[1] = @intCast(row_len);
             }
 
             // Update that our cells rebuilt
