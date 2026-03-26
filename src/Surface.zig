@@ -3562,15 +3562,18 @@ pub fn scrollCallback(
             self.io.terminal.scrollViewport(.{ .delta = y.delta * -1 });
         }
 
-        // Clear pending scroll at viewport boundaries to prevent sticky
-        // behavior where sub-cell offset accumulates at the edge.
+        // Clear pending scroll at viewport boundaries to prevent oscillation
+        // where sub-cell offset accumulates at the edge. We clear in both
+        // directions at each boundary because floor pre-scroll can produce
+        // a positive pending even when trying to scroll down at the bottom.
         if (self.mouse.pending_scroll_y != 0) {
             const top_left = self.io.terminal.screens.active.pages.getTopLeft(.viewport);
-            if (self.mouse.pending_scroll_y > 0 and top_left.up(1) == null) {
-                self.mouse.pending_scroll_y = 0;
-            } else if (self.mouse.pending_scroll_y < 0 and
-                self.io.terminal.screens.active.pages.pinIsActive(top_left))
-            {
+            if (top_left.up(1) == null) {
+                // At the top of scrollback — can't scroll further up.
+                if (self.mouse.pending_scroll_y > 0) self.mouse.pending_scroll_y = 0;
+            }
+            if (self.io.terminal.screens.active.pages.pinIsActive(top_left)) {
+                // At the active area (bottom) — can't scroll further down.
                 self.mouse.pending_scroll_y = 0;
             }
         }
