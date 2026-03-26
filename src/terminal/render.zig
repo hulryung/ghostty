@@ -690,8 +690,8 @@ pub const RenderState = struct {
             // do this is to traverse the viewport pages and check for the
             // matching selection pages.
             for (
-                row_pins,
-                row_sels,
+                row_pins[0..self.rows],
+                row_sels[0..self.rows],
             ) |pin, *sel_bounds| {
                 const p = s.pages.pointFromPin(.screen, pin).?.screen;
                 const row_sel = sel.containedRowCached(
@@ -1001,7 +1001,7 @@ test "basic text" {
 
     // Verify we have the right number of rows
     const row_data = state.row_data.slice();
-    try testing.expectEqual(3, row_data.len);
+    try testing.expectEqual(3 + 2, row_data.len); // +2 for smooth scroll extra rows
 
     // All rows should have cols cells
     const cells = row_data.items(.cells);
@@ -1039,7 +1039,7 @@ test "styled text" {
 
     // Verify we have the right number of rows
     const row_data = state.row_data.slice();
-    try testing.expectEqual(3, row_data.len);
+    try testing.expectEqual(3 + 2, row_data.len); // +2 for smooth scroll extra rows
 
     // All rows should have cols cells
     const cells = row_data.items(.cells);
@@ -1084,7 +1084,7 @@ test "grapheme" {
 
     // Verify we have the right number of rows
     const row_data = state.row_data.slice();
-    try testing.expectEqual(3, row_data.len);
+    try testing.expectEqual(3 + 2, row_data.len); // +2 for smooth scroll extra rows
 
     // All rows should have cols cells
     const cells = row_data.items(.cells);
@@ -1214,13 +1214,13 @@ test "dirty state" {
         @memset(dirty, false);
     }
 
-    // Second update with no changes - no dirty rows
+    // Second update with no changes - no dirty rows (viewport rows only)
     try state.update(alloc, &t);
     try testing.expectEqual(.false, state.dirty);
     {
         const row_data = state.row_data.slice();
         const dirty = row_data.items(.dirty);
-        for (dirty) |d| try testing.expect(!d);
+        for (dirty[0..state.rows]) |d| try testing.expect(!d);
     }
 
     // Write to first line
