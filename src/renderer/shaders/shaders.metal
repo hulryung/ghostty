@@ -24,6 +24,7 @@ struct Uniforms {
   bool use_display_p3;
   bool use_linear_blending;
   bool use_linear_correction;
+  float pending_scroll_y;
 };
 
 //-------------------------------------------------------------------
@@ -453,7 +454,10 @@ fragment float4 cell_bg_fragment(
   constant Uniforms& uniforms [[buffer(1)]],
   constant uchar4 *cells [[buffer(2)]]
 ) {
-  int2 grid_pos = int2(floor((in.position.xy - uniforms.grid_padding.wx) / uniforms.cell_size));
+  // Apply smooth scroll offset to map fragment position back to grid coordinates.
+  float2 scroll_adjusted_pos = in.position.xy;
+  scroll_adjusted_pos.y -= uniforms.pending_scroll_y;
+  int2 grid_pos = int2(floor((scroll_adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
 
   float4 bg = float4(0.0);
 
@@ -617,6 +621,10 @@ vertex CellTextVertexOut cell_text_vertex(
   // Calculate the final position of the cell which uses our glyph size
   // and glyph offset to create the correct bounding box for the glyph.
   cell_pos = cell_pos + size * corner + offset;
+
+  // Apply smooth scroll offset.
+  cell_pos.y += uniforms.pending_scroll_y;
+
   out.position =
       uniforms.projection_matrix * float4(cell_pos.x, cell_pos.y, 0.0f, 1.0f);
 
@@ -822,6 +830,9 @@ vertex ImageVertexOut image_vertex(
   // adds the source rect width/height components.
   float2 image_pos = (uniforms.cell_size * in.grid_pos) + in.cell_offset;
   image_pos += in.dest_size * corner;
+
+  // Apply smooth scroll offset.
+  image_pos.y += uniforms.pending_scroll_y;
 
   out.position =
       uniforms.projection_matrix * float4(image_pos.x, image_pos.y, 0.0f, 1.0f);

@@ -131,6 +131,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         last_bottom_node: ?usize,
         last_bottom_y: terminal.size.CellCountInt,
 
+        /// The effective sub-cell scroll offset in pixels for smooth scrolling.
+        /// Computed per frame from renderer state with boundary checks applied.
+        pending_scroll_y: f32 = 0,
+
         /// The most recent viewport matches so that we can render search
         /// matches in the visible frame. This is provided asynchronously
         /// from the search thread so we have the dirty flag to also note
@@ -1159,6 +1163,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 preedit: ?renderer.State.Preedit,
                 scrollbar: terminal.Scrollbar,
                 overlay_features: []const Overlay.Feature,
+                pending_scroll_y: f32,
             };
 
             // Update all our data as tightly as possible within the mutex.
@@ -1270,12 +1275,24 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     ) catch &.{};
                 };
 
+                // Compute effective pending scroll Y with boundary checks.
+                const pending_scroll_y: f32 = pending_y: {
+                    const raw = state.mouse.pending_scroll_y;
+                    if (raw == 0) break :pending_y 0;
+                    if (state.terminal.flags.mouse_event != .none) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+                    break :pending_y raw;
+                };
+
                 break :critical .{
                     .links = links,
                     .mouse = state.mouse,
                     .preedit = preedit,
                     .scrollbar = scrollbar,
                     .overlay_features = overlay_features,
+                    .pending_scroll_y = pending_scroll_y,
                 };
             };
 
@@ -1355,6 +1372,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 );
             };
 
+            // Store the effective smooth scroll offset for use in shaders.
+            self.pending_scroll_y = critical.pending_scroll_y;
+
             // Acquire the draw mutex for all remaining state updates.
             {
                 self.draw_mutex.lock();
@@ -1413,6 +1433,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 ) catch |err| {
                     log.warn("error updating overlay images err={}", .{err});
                 };
+
+                // Update smooth scroll offset for cell shaders.
+                // If the offset changed, we need a redraw even without cell changes.
+                if (self.uniforms.pending_scroll_y != self.pending_scroll_y) {
+                    self.uniforms.pending_scroll_y = self.pending_scroll_y;
+                    self.cells_rebuilt = true;
+                }
 
                 // Update custom shader uniforms that depend on terminal state.
                 self.updateCustomShaderUniformsFromState();

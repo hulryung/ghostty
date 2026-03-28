@@ -3544,6 +3544,9 @@ pub fn scrollCallback(
             // is negative down but our viewport is positive down.
             self.io.terminal.scrollViewport(.{ .delta = y.delta * -1 });
         }
+
+        // Sync pending scroll offset to renderer state for smooth scrolling.
+        self.renderer_state.mouse.pending_scroll_y = @floatCast(self.mouse.pending_scroll_y);
     }
 
     try self.queueRender();
