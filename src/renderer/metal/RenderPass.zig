@@ -120,6 +120,15 @@ pub fn begin(
     return .{ .encoder = encoder };
 }
 
+/// Set the viewport for this render pass.
+pub fn setViewport(self: *const Self, viewport: mtl.MTLViewport) void {
+    self.encoder.msgSend(
+        void,
+        objc.sel("setViewport:"),
+        .{viewport},
+    );
+}
+
 /// Add a step to this render pass.
 pub fn step(self: *const Self, s: Step) void {
     if (s.draw.instance_count == 0) return;

@@ -1626,6 +1626,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }});
                 defer pass.complete();
 
+
                 // First we draw our background image, if we have one.
                 // The bg image shader also draws the main bg color.
                 //
@@ -2623,6 +2624,40 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     x += if (cp.wide) 2 else 1;
                 }
+            }
+
+            // For smooth scrolling, build both extra rows (above and below
+            // viewport) when there is a sub-cell scroll offset active.
+            if (self.pending_scroll_y != 0) {
+                // Build extra row below viewport (grid y = row_len).
+                const below_idx: usize = row_len;
+                if (below_idx < row_data.len and state.has_extra_row[0]) {
+                    const extra_y: terminal.size.CellCountInt = @intCast(below_idx);
+                    self.cells.clear(extra_y);
+                    self.rebuildRow(
+                        extra_y, row_raws[below_idx], &row_cells[below_idx],
+                        null, row_selection[below_idx], &row_highlights[below_idx], links,
+                    ) catch {};
+                }
+
+                // Build extra row above viewport (grid y = row_len + 1).
+                // The shader maps this to y = -1 (one row above viewport).
+                const above_idx: usize = row_len + 1;
+                if (above_idx < row_data.len and state.has_extra_row[1]) {
+                    const above_y: terminal.size.CellCountInt = @intCast(above_idx);
+                    self.cells.clear(above_y);
+                    self.rebuildRow(
+                        above_y, row_raws[above_idx], &row_cells[above_idx],
+                        null, row_selection[above_idx], &row_highlights[above_idx], links,
+                    ) catch {};
+                }
+
+                // Extend grid_size to include the below extra row so the
+                // shader can access it, and so that the above row BG data
+                // at (grid_size.y * cols) is addressable.
+                self.uniforms.grid_size[1] = @intCast(row_len + 1);
+            } else {
+                self.uniforms.grid_size[1] = @intCast(row_len);
             }
 
             // Update that our cells rebuilt

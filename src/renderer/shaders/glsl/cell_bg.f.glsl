@@ -36,8 +36,16 @@ vec4 cell_bg() {
     }
 
     // Clamp y position if we should extend, otherwise discard if out of bounds.
+    // During smooth scroll, grid_pos.y == -1 maps to the extra "above" row
+    // stored at grid_size.y * grid_size.x in the BG buffer.
     if (grid_pos.y < 0) {
-        if ((padding_extend & EXTEND_UP) != 0) {
+        if (pending_scroll_y > 0.0) {
+            vec4 above_color = load_color(
+                unpack4u8(cells[int(grid_size.y) * int(grid_size.x) + grid_pos.x]),
+                use_linear_blending
+            );
+            return above_color;
+        } else if ((padding_extend & EXTEND_UP) != 0) {
             grid_pos.y = 0;
         } else {
             return bg;

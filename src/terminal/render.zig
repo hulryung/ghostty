@@ -87,6 +87,11 @@ pub const RenderState = struct {
     /// values for comparison.
     viewport_pin: ?PageList.Pin = null,
 
+    /// Whether extra rows beyond the viewport were populated during
+    /// the last update. Used by the renderer for smooth scroll trailing edge.
+    /// Index 0 = row below viewport, index 1 = row above viewport.
+    has_extra_row: [2]bool = .{ false, false },
+
     /// The cached selection so we can avoid expensive selection calculations
     /// if possible.
     selection_cache: ?SelectionCache = null,
@@ -339,22 +344,22 @@ pub const RenderState = struct {
             }
         }
 
-        // Ensure our row length is exactly our height, freeing or allocating
-        // data as necessary. In most cases we'll have a perfectly matching
-        // size.
-        if (self.row_data.len != self.rows) {
+        // Ensure our row length is exactly our height + 2 extra rows for
+        // smooth scroll trailing edges, freeing or allocating as necessary.
+        const total_rows = self.rows + 2;
+        if (self.row_data.len != total_rows) {
             @branchHint(.unlikely);
 
-            if (self.row_data.len < self.rows) {
+            if (self.row_data.len < total_rows) {
                 // Resize our rows to the desired length, marking any added
                 // values undefined.
                 const old_len = self.row_data.len;
-                try self.row_data.resize(alloc, self.rows);
+                try self.row_data.resize(alloc, total_rows);
 
                 // Initialize all our values. Its faster to use slice() + set()
                 // because appendAssumeCapacity does this multiple times.
                 var row_data = self.row_data.slice();
-                for (old_len..self.rows) |y| {
+                for (old_len..total_rows) |y| {
                     row_data.set(y, .{
                         .arena = .{},
                         .pin = undefined,
@@ -368,14 +373,14 @@ pub const RenderState = struct {
             } else {
                 const row_data = self.row_data.slice();
                 for (
-                    row_data.items(.arena)[self.rows..],
-                    row_data.items(.cells)[self.rows..],
+                    row_data.items(.arena)[total_rows..],
+                    row_data.items(.cells)[total_rows..],
                 ) |state, *cell| {
                     var arena: ArenaAllocator = state.promote(alloc);
                     arena.deinit();
                     cell.deinit(alloc);
                 }
-                self.row_data.shrinkRetainingCapacity(self.rows);
+                self.row_data.shrinkRetainingCapacity(total_rows);
             }
         }
 
@@ -553,6 +558,81 @@ pub const RenderState = struct {
         }
         assert(y == self.rows);
 
+        // Read extra rows beyond the viewport for smooth scroll trailing edges.
+        // Index `rows` = row below viewport, `rows+1` = row above viewport.
+        const last_viewport_pin = row_pins[self.rows - 1];
+        const extra_pins = [2]?PageList.Pin{
+            last_viewport_pin.down(1), // below viewport
+            viewport_pin.up(1), // above viewport
+        };
+        for (extra_pins, 0..) |maybe_pin, i| {
+            const extra_y: usize = self.rows + i;
+            if (maybe_pin) |extra_pin| {
+                self.has_extra_row[i] = true;
+                row_pins[extra_y] = extra_pin;
+                const ep: *page.Page = &extra_pin.node.data;
+                const extra_rac = extra_pin.rowAndCell();
+
+                // Always update extra rows since they change when viewport scrolls.
+                {
+                    var arena = row_arenas[extra_y].promote(alloc);
+                    defer row_arenas[extra_y] = arena.state;
+
+                    if (row_cells[extra_y].len > 0) {
+                        _ = arena.reset(.retain_capacity);
+                        row_cells[extra_y].clearRetainingCapacity();
+                        row_sels[extra_y] = null;
+                        row_highlights[extra_y] = .empty;
+                    }
+                    row_dirties[extra_y] = true;
+
+                    const extra_page_cells: []const page.Cell = ep.getCells(extra_rac.row);
+                    row_rows[extra_y] = extra_rac.row.*;
+
+                    const cells: *std.MultiArrayList(Cell) = &row_cells[extra_y];
+                    try cells.resize(alloc, self.cols);
+                    const cells_slice = cells.slice();
+                    fastmem.copy(page.Cell, cells_slice.items(.raw), extra_page_cells[0..self.cols]);
+
+                    if (extra_rac.row.managedMemory()) {
+                        const arena_alloc = arena.allocator();
+                        const cells_grapheme = cells_slice.items(.grapheme);
+                        const cells_style = cells_slice.items(.style);
+                        for (extra_page_cells[0..self.cols], 0..) |*pc, x| {
+                            if (pc.style_id > 0) cells_style[x] = ep.styles.get(ep.memory, pc.style_id).*;
+                            switch (pc.content_tag) {
+                                .codepoint => {},
+                                .codepoint_grapheme => {
+                                    const grapheme = ep.lookupGrapheme(pc) orelse continue;
+                                    cells_grapheme[x] = try arena_alloc.dupe(u21, grapheme);
+                                },
+                                .bg_color_rgb => {
+                                    cells_style[x] = .{ .bg_color = .{ .rgb = .{
+                                        .r = pc.content.color_rgb.r,
+                                        .g = pc.content.color_rgb.g,
+                                        .b = pc.content.color_rgb.b,
+                                    } } };
+                                },
+                                .bg_color_palette => {
+                                    cells_style[x] = .{ .bg_color = .{ .palette = pc.content.color_palette } };
+                                },
+                            }
+                        }
+                    }
+                    any_dirty = true;
+                }
+            } else {
+                self.has_extra_row[i] = false;
+                row_dirties[extra_y] = true;
+                if (row_cells[extra_y].len > 0) {
+                    var arena = row_arenas[extra_y].promote(alloc);
+                    _ = arena.reset(.retain_capacity);
+                    row_cells[extra_y].clearRetainingCapacity();
+                    row_arenas[extra_y] = arena.state;
+                }
+            }
+        }
+
         // If our screen has a selection, then mark the rows with the
         // selection. We do this outside of the loop above because its unlikely
         // a selection exists and because the way our selections are structured
@@ -606,8 +686,8 @@ pub const RenderState = struct {
             // do this is to traverse the viewport pages and check for the
             // matching selection pages.
             for (
-                row_pins,
-                row_sels,
+                row_pins[0..self.rows],
+                row_sels[0..self.rows],
             ) |pin, *sel_bounds| {
                 const p = s.pages.pointFromPin(.screen, pin).?.screen;
                 const row_sel = sel.containedRowCached(

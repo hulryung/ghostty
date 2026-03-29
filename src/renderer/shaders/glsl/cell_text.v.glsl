@@ -46,8 +46,14 @@ void main() {
     bool cursor_wide = (bools & CURSOR_WIDE) != 0;
     bool use_linear_blending = (bools & USE_LINEAR_BLENDING) != 0;
 
-    // Convert the grid x, y into world space x, y by accounting for cell size
-    vec2 cell_pos = cell_size * vec2(grid_pos);
+    // Convert the grid x, y into world space x, y by accounting for cell size.
+    // The "above viewport" extra row is stored at grid y = grid_size.y but
+    // should render at y = -1 (one row above the viewport).
+    vec2 grid_pos_f = vec2(grid_pos);
+    if (grid_pos.y == grid_size.y) {
+        grid_pos_f.y = -1.0;
+    }
+    vec2 cell_pos = cell_size * grid_pos_f;
 
     int vid = gl_VertexID;
 
@@ -119,9 +125,13 @@ void main() {
     // Get our color. We always fetch a linearized version to
     // make it easier to handle minimum contrast calculations.
     out_data.color = load_color(color, true);
-    // Get the BG color
+    // Get the BG color. For the above-viewport extra row, read from the
+    // dedicated slot at the end of the buffer.
+    uint bg_index = (grid_pos.y == grid_size.y)
+        ? (grid_size.y * grid_size.x + grid_pos.x)
+        : (grid_pos.y * grid_size.x + grid_pos.x);
     out_data.bg_color = load_color(
-            unpack4u8(bg_colors[grid_pos.y * grid_size.x + grid_pos.x]),
+            unpack4u8(bg_colors[bg_index]),
             true
         );
     // Blend it with the global bg color

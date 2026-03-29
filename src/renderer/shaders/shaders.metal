@@ -477,8 +477,13 @@ fragment float4 cell_bg_fragment(
   }
 
   // Clamp y position if we should extend, otherwise discard if out of bounds.
+  // During smooth scroll, grid_pos.y == -1 maps to the extra "above" row
+  // stored at (grid_size.y) * grid_size.x in the BG buffer.
   if (grid_pos.y < 0) {
-    if (uniforms.padding_extend & EXTEND_UP) {
+    if (uniforms.pending_scroll_y > 0.0) {
+      uchar4 above_color = cells[uniforms.grid_size.y * uniforms.grid_size.x + grid_pos.x];
+      return load_color(above_color, uniforms.use_display_p3, uniforms.use_linear_blending);
+    } else if (uniforms.padding_extend & EXTEND_UP) {
       grid_pos.y = 0;
     } else {
       return bg;
@@ -563,8 +568,14 @@ vertex CellTextVertexOut cell_text_vertex(
   constant Uniforms& uniforms [[buffer(1)]],
   constant uchar4 *bg_colors [[buffer(2)]]
 ) {
-  // Convert the grid x, y into world space x, y by accounting for cell size
-  float2 cell_pos = uniforms.cell_size * float2(in.grid_pos);
+  // Convert the grid x, y into world space x, y by accounting for cell size.
+  // The "above viewport" extra row is stored at grid y = grid_size.y but
+  // should render at y = -1 (one row above the viewport).
+  float2 grid_pos_f = float2(in.grid_pos);
+  if (in.grid_pos.y == uniforms.grid_size.y) {
+    grid_pos_f.y = -1.0;
+  }
+  float2 cell_pos = uniforms.cell_size * grid_pos_f;
 
   // We use a triangle strip with 4 vertices to render quads,
   // so we determine which corner of the cell this vertex is in
@@ -641,9 +652,13 @@ vertex CellTextVertexOut cell_text_vertex(
     true
   );
 
-  // Get the BG color
+  // Get the BG color. For the above-viewport extra row, read from the
+  // dedicated slot at the end of the buffer.
+  uint bg_index = (in.grid_pos.y == uniforms.grid_size.y)
+    ? (uniforms.grid_size.y * uniforms.grid_size.x + in.grid_pos.x)
+    : (in.grid_pos.y * uniforms.grid_size.x + in.grid_pos.x);
   out.bg_color = load_color(
-    bg_colors[in.grid_pos.y * uniforms.grid_size.x + in.grid_pos.x],
+    bg_colors[bg_index],
     uniforms.use_display_p3,
     true
   );
