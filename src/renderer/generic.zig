@@ -773,6 +773,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .cursor_text = @splat(0),
                     .selection_background_color = @splat(0),
                     .selection_foreground_color = @splat(0),
+                    .pending_scroll = .{ 0, 0 },
                 },
                 .bg_image_buffer = undefined,
 
@@ -1279,7 +1280,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const pending_scroll_y: f32 = pending_y: {
                     const raw = state.mouse.pending_scroll_y;
                     if (raw == 0) break :pending_y 0;
+                    // Clear when mouse reporting is active.
                     if (state.terminal.flags.mouse_event != .none) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+                    // Clear at scroll boundaries.
+                    const top_left = state.terminal.screens.active.pages.getTopLeft(.viewport);
+                    if (raw > 0 and top_left.up(1) == null) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+                    if (raw < 0 and state.terminal.screens.active.pages.pinIsActive(top_left)) {
                         state.mouse.pending_scroll_y = 0;
                         break :pending_y 0;
                     }
@@ -2122,6 +2134,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const cursor_style: renderer.CursorStyle = .fromTerminal(self.terminal_state.cursor.visual_style);
             uniforms.previous_cursor_style = uniforms.current_cursor_style;
             uniforms.current_cursor_style = @as(i32, @intFromEnum(cursor_style));
+
+            // Pass smooth scroll offset to custom shaders.
+            uniforms.pending_scroll = .{
+                0,
+                self.pending_scroll_y,
+            };
         }
 
         /// Update per-frame custom shader uniforms.

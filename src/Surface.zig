@@ -2788,6 +2788,11 @@ pub fn keyCallback(
 
         if (self.config.scroll_to_bottom.keystroke) self.io.terminal.scrollViewport(.bottom);
 
+        // Reset smooth scroll offset so stale sub-cell offset doesn't
+        // linger after typing.
+        self.mouse.pending_scroll_y = 0;
+        self.renderer_state.mouse.pending_scroll_y = 0;
+
         try self.queueRender();
     }
 
@@ -3542,6 +3547,20 @@ pub fn scrollCallback(
             // rendering. We have to switch signs here because our delta
             // is negative down but our viewport is positive down.
             self.io.terminal.scrollViewport(.{ .delta = y.delta * -1 });
+        }
+
+        // Clear pending scroll at viewport boundaries.
+        if (self.mouse.pending_scroll_y != 0) {
+            const top_left = self.io.terminal.screens.active.pages.getTopLeft(.viewport);
+            if (self.mouse.pending_scroll_y > 0 and top_left.up(1) == null) {
+                // At top of scrollback — can't scroll further up.
+                self.mouse.pending_scroll_y = 0;
+            } else if (self.mouse.pending_scroll_y < 0 and
+                self.io.terminal.screens.active.pages.pinIsActive(top_left))
+            {
+                // At active area — can't scroll further down.
+                self.mouse.pending_scroll_y = 0;
+            }
         }
 
         // Sync pending scroll offset to renderer state for smooth scrolling.
