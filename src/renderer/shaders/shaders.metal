@@ -454,7 +454,10 @@ fragment float4 cell_bg_fragment(
   constant Uniforms& uniforms [[buffer(1)]],
   constant uchar4 *cells [[buffer(2)]]
 ) {
-  int2 grid_pos = int2(floor((in.position.xy - uniforms.grid_padding.wx) / uniforms.cell_size));
+  // Adjust fragment position for smooth scroll offset.
+  float2 scroll_adjusted_pos = in.position.xy;
+  scroll_adjusted_pos.y -= uniforms.pending_scroll_y;
+  int2 grid_pos = int2(floor((scroll_adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
 
   float4 bg = float4(0.0);
 
@@ -475,7 +478,11 @@ fragment float4 cell_bg_fragment(
 
   // Clamp y position if we should extend, otherwise discard if out of bounds.
   if (grid_pos.y < 0) {
-    if (uniforms.padding_extend & EXTEND_UP) {
+    if (uniforms.pending_scroll_y > 0.0) {
+      // During upward smooth scroll, use the extra row stored at end of grid.
+      uchar4 above_color = cells[(uniforms.grid_size.y - 1) * uniforms.grid_size.x + grid_pos.x];
+      return load_color(above_color, uniforms.use_display_p3, uniforms.use_linear_blending);
+    } else if (uniforms.padding_extend & EXTEND_UP) {
       grid_pos.y = 0;
     } else {
       return bg;
@@ -560,8 +567,14 @@ vertex CellTextVertexOut cell_text_vertex(
   constant Uniforms& uniforms [[buffer(1)]],
   constant uchar4 *bg_colors [[buffer(2)]]
 ) {
-  // Convert the grid x, y into world space x, y by accounting for cell size
-  float2 cell_pos = uniforms.cell_size * float2(in.grid_pos);
+  // Convert the grid x, y into world space x, y by accounting for cell size.
+  // The extra smooth scroll row is stored at grid y = grid_size.y - 1
+  // but should render at y = -1 (above viewport) when scrolling up.
+  float2 grid_pos_f = float2(in.grid_pos);
+  if (uniforms.pending_scroll_y > 0.0 && in.grid_pos.y == uniforms.grid_size.y - 1) {
+    grid_pos_f.y = -1.0;
+  }
+  float2 cell_pos = uniforms.cell_size * grid_pos_f;
 
   // We use a triangle strip with 4 vertices to render quads,
   // so we determine which corner of the cell this vertex is in
@@ -618,6 +631,10 @@ vertex CellTextVertexOut cell_text_vertex(
   // Calculate the final position of the cell which uses our glyph size
   // and glyph offset to create the correct bounding box for the glyph.
   cell_pos = cell_pos + size * corner + offset;
+
+  // Apply smooth scroll offset.
+  cell_pos.y += uniforms.pending_scroll_y;
+
   out.position =
       uniforms.projection_matrix * float4(cell_pos.x, cell_pos.y, 0.0f, 1.0f);
 
@@ -823,6 +840,9 @@ vertex ImageVertexOut image_vertex(
   // adds the source rect width/height components.
   float2 image_pos = (uniforms.cell_size * in.grid_pos) + in.cell_offset;
   image_pos += in.dest_size * corner;
+
+  // Apply smooth scroll offset.
+  image_pos.y += uniforms.pending_scroll_y;
 
   out.position =
       uniforms.projection_matrix * float4(image_pos.x, image_pos.y, 0.0f, 1.0f);
