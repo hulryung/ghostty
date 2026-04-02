@@ -478,9 +478,9 @@ fragment float4 cell_bg_fragment(
 
   // Clamp y position if we should extend, otherwise discard if out of bounds.
   if (grid_pos.y < 0) {
-    if (uniforms.pending_scroll_y > 0.0) {
-      // During upward smooth scroll, use the extra row stored at end of grid.
-      uchar4 above_color = cells[(uniforms.grid_size.y - 1) * uniforms.grid_size.x + grid_pos.x];
+    if (uniforms.pending_scroll_y > 0.0 && grid_pos.y == -1) {
+      // Scrolling up: the immediately adjacent extra row above the viewport.
+      uchar4 above_color = cells[uniforms.grid_size.y * uniforms.grid_size.x + grid_pos.x];
       return load_color(above_color, uniforms.use_display_p3, uniforms.use_linear_blending);
     } else if (uniforms.padding_extend & EXTEND_UP) {
       grid_pos.y = 0;
@@ -488,7 +488,11 @@ fragment float4 cell_bg_fragment(
       return bg;
     }
   } else if (grid_pos.y > uniforms.grid_size.y - 1) {
-    if (uniforms.padding_extend & EXTEND_DOWN) {
+    if (uniforms.pending_scroll_y < 0.0 && grid_pos.y == uniforms.grid_size.y) {
+      // Scrolling down: the immediately adjacent extra row below the viewport.
+      uchar4 below_color = cells[uniforms.grid_size.y * uniforms.grid_size.x + grid_pos.x];
+      return load_color(below_color, uniforms.use_display_p3, uniforms.use_linear_blending);
+    } else if (uniforms.padding_extend & EXTEND_DOWN) {
       grid_pos.y = uniforms.grid_size.y - 1;
     } else {
       return bg;
@@ -568,10 +572,10 @@ vertex CellTextVertexOut cell_text_vertex(
   constant uchar4 *bg_colors [[buffer(2)]]
 ) {
   // Convert the grid x, y into world space x, y by accounting for cell size.
-  // The extra smooth scroll row is stored at grid y = grid_size.y - 1
-  // but should render at y = -1 (above viewport) when scrolling up.
+  // The extra smooth scroll row is stored at grid y = grid_size.y
+  // and should render at y = -1 (above viewport) when scrolling up.
   float2 grid_pos_f = float2(in.grid_pos);
-  if (uniforms.pending_scroll_y > 0.0 && in.grid_pos.y == uniforms.grid_size.y - 1) {
+  if (uniforms.pending_scroll_y > 0.0 && in.grid_pos.y == uniforms.grid_size.y) {
     grid_pos_f.y = -1.0;
   }
   float2 cell_pos = uniforms.cell_size * grid_pos_f;

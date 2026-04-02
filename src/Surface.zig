@@ -4936,6 +4936,8 @@ pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordin
 /// Precondition: the render_state mutex must be held.
 fn scrollToBottom(self: *Surface) !void {
     self.io.terminal.scrollViewport(.{ .bottom = {} });
+    self.mouse.pending_scroll_y = 0;
+    self.renderer_state.mouse.pending_scroll_y = 0;
     try self.queueRender();
 }
 

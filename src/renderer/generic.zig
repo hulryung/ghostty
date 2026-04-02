@@ -1201,13 +1201,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     self.last_bottom_node = @intFromPtr(br.node);
                     self.last_bottom_y = br.y;
 
-                    // Scroll
+                    // Scroll and clear smooth scroll offset.
                     state.terminal.scrollViewport(.bottom);
+                    state.mouse.pending_scroll_y = 0;
                 }
 
                 // Compute effective pending scroll Y. Clear stale offset
                 // when mouse reporting is active (app handles scroll).
-                const pending_scroll_y: f32 = pending_y: {
+                var pending_scroll_y: f32 = pending_y: {
                     const raw = state.mouse.pending_scroll_y;
                     if (raw == 0) break :pending_y 0;
                     if (state.terminal.flags.mouse_event != .none) {
@@ -1219,6 +1220,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 // Update our terminal state
                 try self.terminal_state.update(self.alloc, state.terminal, pending_scroll_y);
+
+                // If the extra row couldn't be populated (viewport at
+                // scrollback boundary), the offset would cause artifacts —
+                // clear it so the shader doesn't shift content into empty space.
+                if (pending_scroll_y != 0 and !self.terminal_state.has_extra_row) {
+                    state.mouse.pending_scroll_y = 0;
+                    pending_scroll_y = 0;
+                }
 
                 // If our terminal state is dirty at all we need to redo
                 // the viewport search.
@@ -2473,7 +2482,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 };
             }
 
-            // Build extra smooth scroll row and adjust grid_size.
+            // Build extra smooth scroll row. grid_size stays at row_len
+            // (viewport only) — the extra row is outside the grid and
+            // accessed by direct indexing at grid_size.y * grid_size.x + x.
             if (self.pending_scroll_y != 0 and state.has_extra_row) {
                 const extra_y: terminal.size.CellCountInt = @intCast(row_len);
                 self.cells.clear(extra_y);
@@ -2481,10 +2492,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     extra_y, row_raws[row_len], &row_cells[row_len],
                     null, row_selection[row_len], &row_highlights[row_len], links,
                 ) catch {};
-                // Include extra row in grid for shader bg color lookup.
-                self.uniforms.grid_size[1] = @intCast(row_len + 1);
-            } else {
-                self.uniforms.grid_size[1] = @intCast(row_len);
             }
 
             // Setup our cursor rendering information.

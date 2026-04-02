@@ -37,10 +37,10 @@ vec4 cell_bg() {
 
     // Clamp y position if we should extend, otherwise discard if out of bounds.
     if (grid_pos.y < 0) {
-        if (pending_scroll_y > 0.0) {
-            // During upward smooth scroll, use the extra row stored at end of grid.
+        if (pending_scroll_y > 0.0 && grid_pos.y == -1) {
+            // Scrolling up: the immediately adjacent extra row above the viewport.
             vec4 above_color = load_color(
-                unpack4u8(cells[int(grid_size.y - 1u) * int(grid_size.x) + grid_pos.x]),
+                unpack4u8(cells[int(grid_size.y) * int(grid_size.x) + grid_pos.x]),
                 use_linear_blending
             );
             return above_color;
@@ -50,7 +50,14 @@ vec4 cell_bg() {
             return bg;
         }
     } else if (grid_pos.y > grid_size.y - 1) {
-        if ((padding_extend & EXTEND_DOWN) != 0) {
+        if (pending_scroll_y < 0.0 && grid_pos.y == int(grid_size.y)) {
+            // Scrolling down: the immediately adjacent extra row below the viewport.
+            vec4 below_color = load_color(
+                unpack4u8(cells[int(grid_size.y) * int(grid_size.x) + grid_pos.x]),
+                use_linear_blending
+            );
+            return below_color;
+        } else if ((padding_extend & EXTEND_DOWN) != 0) {
             grid_pos.y = int(grid_size.y) - 1;
         } else {
             return bg;

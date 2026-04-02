@@ -47,10 +47,10 @@ void main() {
     bool use_linear_blending = (bools & USE_LINEAR_BLENDING) != 0;
 
     // Convert the grid x, y into world space x, y by accounting for cell size.
-    // The extra smooth scroll row is stored at grid y = grid_size.y - 1
-    // but should render at y = -1 (above viewport) when scrolling up.
+    // The extra smooth scroll row is stored at grid y = grid_size.y
+    // and should render at y = -1 (above viewport) when scrolling up.
     vec2 grid_pos_f = vec2(grid_pos);
-    if (pending_scroll_y > 0.0 && grid_pos.y == grid_size.y - 1u) {
+    if (pending_scroll_y > 0.0 && grid_pos.y == grid_size.y) {
         grid_pos_f.y = -1.0;
     }
     vec2 cell_pos = cell_size * grid_pos_f;
