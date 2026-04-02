@@ -46,8 +46,14 @@ void main() {
     bool cursor_wide = (bools & CURSOR_WIDE) != 0;
     bool use_linear_blending = (bools & USE_LINEAR_BLENDING) != 0;
 
-    // Convert the grid x, y into world space x, y by accounting for cell size
-    vec2 cell_pos = cell_size * vec2(grid_pos);
+    // Convert the grid x, y into world space x, y by accounting for cell size.
+    // The extra smooth scroll row is stored at grid y = grid_size.y - 1
+    // but should render at y = -1 (above viewport) when scrolling up.
+    vec2 grid_pos_f = vec2(grid_pos);
+    if (pending_scroll_y > 0.0 && grid_pos.y == grid_size.y - 1u) {
+        grid_pos_f.y = -1.0;
+    }
+    vec2 cell_pos = cell_size * grid_pos_f;
 
     int vid = gl_VertexID;
 
@@ -105,6 +111,10 @@ void main() {
     // Calculate the final position of the cell which uses our glyph size
     // and glyph offset to create the correct bounding box for the glyph.
     cell_pos = cell_pos + size * corner + offset;
+
+    // Apply smooth scroll offset.
+    cell_pos.y += pending_scroll_y;
+
     gl_Position = projection_matrix * vec4(cell_pos.x, cell_pos.y, 0.0f, 1.0f);
 
     // Calculate the texture coordinate in pixels. This is NOT normalized

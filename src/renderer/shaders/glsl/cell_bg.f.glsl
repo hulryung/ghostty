@@ -12,7 +12,10 @@ layout(binding = 1, std430) readonly buffer bg_cells {
 
 vec4 cell_bg() {
     uvec2 grid_size = unpack2u16(grid_size_packed_2u16);
-    ivec2 grid_pos = ivec2(floor((gl_FragCoord.xy - grid_padding.wx) / cell_size));
+    // Adjust fragment position for smooth scroll offset, then compute grid position.
+    vec2 scroll_adjusted_pos = gl_FragCoord.xy;
+    scroll_adjusted_pos.y -= pending_scroll_y;
+    ivec2 grid_pos = ivec2(floor((scroll_adjusted_pos - grid_padding.wx) / cell_size));
     bool use_linear_blending = (bools & USE_LINEAR_BLENDING) != 0;
 
     vec4 bg = vec4(0.0);
@@ -34,7 +37,14 @@ vec4 cell_bg() {
 
     // Clamp y position if we should extend, otherwise discard if out of bounds.
     if (grid_pos.y < 0) {
-        if ((padding_extend & EXTEND_UP) != 0) {
+        if (pending_scroll_y > 0.0) {
+            // During upward smooth scroll, use the extra row stored at end of grid.
+            vec4 above_color = load_color(
+                unpack4u8(cells[int(grid_size.y - 1u) * int(grid_size.x) + grid_pos.x]),
+                use_linear_blending
+            );
+            return above_color;
+        } else if ((padding_extend & EXTEND_UP) != 0) {
             grid_pos.y = 0;
         } else {
             return bg;
