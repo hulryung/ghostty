@@ -86,7 +86,7 @@ pub const Contents = struct {
     ) Allocator.Error!void {
         self.size = size;
 
-        const cell_count = @as(usize, size.columns) * @as(usize, size.rows);
+        const cell_count = @as(usize, size.columns) * (@as(usize, size.rows) + 1);
 
         const bg_cells = try alloc.alloc(shaderpkg.CellBg, cell_count);
         errdefer alloc.free(bg_cells);
@@ -107,7 +107,7 @@ pub const Contents = struct {
         // be first and last in the buffer, respectively.
         var fg_rows: ArrayListCollection(shaderpkg.CellText) = try .init(
             alloc,
-            size.rows + 2,
+            size.rows + 3,
             size.columns * 3,
         );
         errdefer fg_rows.deinit(alloc);
@@ -118,8 +118,8 @@ pub const Contents = struct {
         // waste the memory.
         fg_rows.lists[0].deinit(alloc);
         fg_rows.lists[0] = try .initCapacity(alloc, 1);
-        fg_rows.lists[size.rows + 1].deinit(alloc);
-        fg_rows.lists[size.rows + 1] = try .initCapacity(alloc, 1);
+        fg_rows.lists[size.rows + 2].deinit(alloc);
+        fg_rows.lists[size.rows + 2] = try .initCapacity(alloc, 1);
 
         // Perform the swap, no going back from here.
         errdefer comptime unreachable;
@@ -143,7 +143,7 @@ pub const Contents = struct {
     ) void {
         if (self.size.rows == 0) return;
         self.fg_rows.lists[0].clearRetainingCapacity();
-        self.fg_rows.lists[self.size.rows + 1].clearRetainingCapacity();
+        self.fg_rows.lists[self.size.rows + 2].clearRetainingCapacity();
 
         const cell = v orelse return;
         const style = cursor_style orelse return;
@@ -152,7 +152,7 @@ pub const Contents = struct {
             // Block cursors should be drawn first
             .block => self.fg_rows.lists[0].appendAssumeCapacity(cell),
             // Other cursor styles should be drawn last
-            .block_hollow, .bar, .underline, .lock => self.fg_rows.lists[self.size.rows + 1].appendAssumeCapacity(cell),
+            .block_hollow, .bar, .underline, .lock => self.fg_rows.lists[self.size.rows + 2].appendAssumeCapacity(cell),
         }
     }
 
@@ -162,8 +162,8 @@ pub const Contents = struct {
         if (self.fg_rows.lists[0].items.len > 0) {
             return self.fg_rows.lists[0].items[0];
         }
-        if (self.fg_rows.lists[self.size.rows + 1].items.len > 0) {
-            return self.fg_rows.lists[self.size.rows + 1].items[0];
+        if (self.fg_rows.lists[self.size.rows + 2].items.len > 0) {
+            return self.fg_rows.lists[self.size.rows + 2].items[0];
         }
         return null;
     }
@@ -189,7 +189,7 @@ pub const Contents = struct {
     ) Allocator.Error!void {
         const y = cell.grid_pos[1];
 
-        assert(y < self.size.rows);
+        assert(y <= self.size.rows);
 
         switch (key) {
             .bg => comptime unreachable,
@@ -207,7 +207,7 @@ pub const Contents = struct {
 
     /// Clear all of the cell contents for a given row.
     pub fn clear(self: *Contents, y: terminal.size.CellCountInt) void {
-        assert(y < self.size.rows);
+        assert(y <= self.size.rows);
 
         @memset(self.bg_cells[@as(usize, y) * self.size.columns ..][0..self.size.columns], .{ 0, 0, 0, 0 });
 
