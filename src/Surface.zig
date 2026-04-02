@@ -2788,6 +2788,11 @@ pub fn keyCallback(
 
         if (self.config.scroll_to_bottom.keystroke) self.io.terminal.scrollViewport(.bottom);
 
+        // Reset smooth scroll offset so stale sub-cell offset doesn't
+        // linger after typing.
+        self.mouse.pending_scroll_y = 0;
+        self.renderer_state.mouse.pending_scroll_y = 0;
+
         try self.queueRender();
     }
 
@@ -3380,8 +3385,6 @@ pub fn scrollCallback(
     yoff: f64,
     scroll_mods: input.ScrollMods,
 ) !void {
-    // log.info("SCROLL: xoff={} yoff={} mods={}", .{ xoff, yoff, scroll_mods });
-
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
     defer crash.sentry.thread_state = null;
@@ -3423,21 +3426,23 @@ pub fn scrollCallback(
         // direction and undo a pending scroll.
         const poff: f64 = self.mouse.pending_scroll_y + yoff_adjusted;
 
-        // If the new offset is less than a single unit of scroll, we save
-        // the new pending value and do not scroll yet.
-        if (@abs(poff) < cell_size) {
-            self.mouse.pending_scroll_y = poff;
+        if (poff == 0) {
+            self.mouse.pending_scroll_y = 0;
             break :y .{};
         }
 
-        // We scroll by the number of rows in the offset and save the remainder
-        const amount = poff / cell_size;
-        assert(@abs(amount) >= 1);
-        self.mouse.pending_scroll_y = poff - (amount * cell_size);
+        // Accumulate sub-cell offsets for smooth scrolling.
+        // Only convert to row scrolls when offset reaches a full cell.
+        const amount: f64 = amount: {
+            if (@abs(poff) < cell_size) {
+                self.mouse.pending_scroll_y = poff;
+                break :y .{};
+            }
+            break :amount @trunc(poff / cell_size);
+        };
 
-        // Round towards zero.
-        const delta: isize = @intFromFloat(@trunc(amount));
-        assert(@abs(delta) >= 1);
+        self.mouse.pending_scroll_y = poff - (amount * cell_size);
+        const delta: isize = @intFromFloat(amount);
 
         break :y .{ .delta = delta };
     };
@@ -3456,10 +3461,10 @@ pub fn scrollCallback(
             break :x .{};
         }
 
-        const amount = poff / cell_size;
+        const amount: f64 = @trunc(poff / cell_size);
         assert(@abs(amount) >= 1);
         self.mouse.pending_scroll_x = poff - (amount * cell_size);
-        const delta: isize = @intFromFloat(@trunc(amount));
+        const delta: isize = @intFromFloat(amount);
         assert(@abs(delta) >= 1);
         break :x .{ .delta = delta };
     };
@@ -3544,6 +3549,23 @@ pub fn scrollCallback(
             // is negative down but our viewport is positive down.
             self.io.terminal.scrollViewport(.{ .delta = y.delta * -1 });
         }
+
+        // Clear pending scroll at viewport boundaries.
+        if (self.mouse.pending_scroll_y != 0) {
+            const top_left = self.io.terminal.screens.active.pages.getTopLeft(.viewport);
+            if (self.mouse.pending_scroll_y > 0 and top_left.up(1) == null) {
+                // At top of scrollback with upward offset — can't scroll further up.
+                self.mouse.pending_scroll_y = 0;
+            } else if (self.mouse.pending_scroll_y < 0 and
+                self.io.terminal.screens.active.pages.pinIsActive(top_left))
+            {
+                // At active area with downward offset — can't scroll further down.
+                self.mouse.pending_scroll_y = 0;
+            }
+        }
+
+        // Sync pending scroll offset to renderer state for smooth scrolling.
+        self.renderer_state.mouse.pending_scroll_y = @floatCast(self.mouse.pending_scroll_y);
     }
 
     try self.queueRender();
@@ -4900,8 +4922,11 @@ pub fn colorSchemeCallback(self: *Surface, scheme: apprt.ColorScheme) !void {
 }
 
 pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordinate {
-    // Get our grid cell
-    const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = xpos, .y = ypos } };
+    // Adjust for smooth scroll offset: when content is shifted by
+    // pending_scroll_y pixels, a click at screen Y maps to a grid
+    // position offset by that amount.
+    const adjusted_ypos = ypos - self.mouse.pending_scroll_y;
+    const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = xpos, .y = adjusted_ypos } };
     const grid = coord.convert(.grid, self.size).grid;
     return .{ .x = grid.x, .y = grid.y };
 }
