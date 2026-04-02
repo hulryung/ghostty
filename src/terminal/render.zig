@@ -401,7 +401,7 @@ pub const RenderState = struct {
         // Go through and setup our rows.
         var row_it = s.pages.rowIterator(
             .right_down,
-            .{ .pin = viewport_pin },
+            .{ .viewport = .{} },
             null,
         );
         var y: size.CellCountInt = 0;

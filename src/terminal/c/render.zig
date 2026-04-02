@@ -175,7 +175,7 @@ pub fn update(
     const state = state_ orelse return .invalid_value;
     const t: *ZigTerminal = (terminal_ orelse return .invalid_value).terminal;
 
-    state.state.update(state.alloc, t) catch return .out_of_memory;
+    state.state.update(state.alloc, t, 0) catch return .out_of_memory;
     return .success;
 }
 

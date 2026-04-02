@@ -1318,8 +1318,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const row_data = self.terminal_state.row_data.slice();
                 var any_dirty: bool = false;
                 for (
-                    row_data.items(.highlights)[0..state.rows],
-                    row_data.items(.dirty)[0..state.rows],
+                    row_data.items(.highlights)[0..self.terminal_state.rows],
+                    row_data.items(.dirty)[0..self.terminal_state.rows],
                 ) |*highlights, *dirty| {
                     if (highlights.items.len > 0) {
                         highlights.clearRetainingCapacity();
