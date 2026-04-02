@@ -24,6 +24,7 @@ struct Uniforms {
   bool use_display_p3;
   bool use_linear_blending;
   bool use_linear_correction;
+  float pending_scroll_y;
 };
 
 //-------------------------------------------------------------------
