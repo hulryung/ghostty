@@ -529,7 +529,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -541,7 +541,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("z");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(1, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -553,7 +553,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice(" z");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -564,7 +564,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("\u{00a0}z");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(1, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -576,7 +576,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("   ");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(1, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             3,
@@ -588,7 +588,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("z");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             1,
@@ -600,7 +600,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(1, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -617,7 +617,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice(" ");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -634,7 +634,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(1, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -646,7 +646,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             1,
@@ -658,7 +658,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice("");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,
@@ -670,7 +670,7 @@ test "Cell constraint widths" {
     {
         t.fullReset();
         s.nextSlice(" z");
-        try state.update(alloc, &t);
+        try state.update(alloc, &t, 0);
         try testing.expectEqual(2, constraintWidth(
             state.row_data.get(0).cells.items(.raw),
             0,

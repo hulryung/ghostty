@@ -152,7 +152,7 @@ test "renderCellMap" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Get a set
     var set = try Set.fromConfig(alloc, &.{
@@ -205,7 +205,7 @@ test "renderCellMap hover links" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Get a set
     var set = try Set.fromConfig(alloc, &.{
@@ -283,7 +283,7 @@ test "renderCellMap mods no match" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Get a set
     var set = try Set.fromConfig(alloc, &.{

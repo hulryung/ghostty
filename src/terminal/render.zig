@@ -39,7 +39,7 @@ const Terminal = @import("Terminal.zig");
 ///
 ///     var state: RenderState = .empty;
 ///     defer state.deinit(alloc);
-///     state.update(alloc, &terminal);
+///     state.update(alloc, &terminal, 0);
 ///
 /// Note: the render state retains as much memory as possible between updates
 /// to prevent future allocations. If a very large frame is rendered once,
@@ -90,6 +90,9 @@ pub const RenderState = struct {
     /// The cached selection so we can avoid expensive selection calculations
     /// if possible.
     selection_cache: ?SelectionCache = null,
+
+    /// Whether the extra smooth scroll row was populated during the last update.
+    has_extra_row: bool = false,
 
     /// Initial state.
     pub const empty: RenderState = .{
@@ -264,6 +267,7 @@ pub const RenderState = struct {
         self: *RenderState,
         alloc: Allocator,
         t: *Terminal,
+        pending_scroll_y: f32,
     ) Allocator.Error!void {
         const s: *Screen = t.screens.active;
         const viewport_pin = s.pages.getTopLeft(.viewport);
@@ -339,22 +343,23 @@ pub const RenderState = struct {
             }
         }
 
-        // Ensure our row length is exactly our height, freeing or allocating
-        // data as necessary. In most cases we'll have a perfectly matching
-        // size.
-        if (self.row_data.len != self.rows) {
+        // Ensure our row length is exactly our height plus one extra row for
+        // smooth scrolling, freeing or allocating data as necessary. In most
+        // cases we'll have a perfectly matching size.
+        const row_data_len = self.rows + 1;
+        if (self.row_data.len != row_data_len) {
             @branchHint(.unlikely);
 
-            if (self.row_data.len < self.rows) {
+            if (self.row_data.len < row_data_len) {
                 // Resize our rows to the desired length, marking any added
                 // values undefined.
                 const old_len = self.row_data.len;
-                try self.row_data.resize(alloc, self.rows);
+                try self.row_data.resize(alloc, row_data_len);
 
                 // Initialize all our values. Its faster to use slice() + set()
                 // because appendAssumeCapacity does this multiple times.
                 var row_data = self.row_data.slice();
-                for (old_len..self.rows) |y| {
+                for (old_len..row_data_len) |y| {
                     row_data.set(y, .{
                         .arena = .{},
                         .pin = undefined,
@@ -368,14 +373,14 @@ pub const RenderState = struct {
             } else {
                 const row_data = self.row_data.slice();
                 for (
-                    row_data.items(.arena)[self.rows..],
-                    row_data.items(.cells)[self.rows..],
+                    row_data.items(.arena)[row_data_len..],
+                    row_data.items(.cells)[row_data_len..],
                 ) |state, *cell| {
                     var arena: ArenaAllocator = state.promote(alloc);
                     arena.deinit();
                     cell.deinit(alloc);
                 }
-                self.row_data.shrinkRetainingCapacity(self.rows);
+                self.row_data.shrinkRetainingCapacity(row_data_len);
             }
         }
 
@@ -396,7 +401,7 @@ pub const RenderState = struct {
         // Go through and setup our rows.
         var row_it = s.pages.rowIterator(
             .right_down,
-            .{ .viewport = .{} },
+            .{ .pin = viewport_pin },
             null,
         );
         var y: size.CellCountInt = 0;
@@ -553,6 +558,83 @@ pub const RenderState = struct {
         }
         assert(y == self.rows);
 
+        // Populate extra row for smooth scrolling when there's a sub-cell offset.
+        if (pending_scroll_y != 0) {
+            const extra_y: usize = self.rows;
+            const maybe_pin: ?PageList.Pin = if (pending_scroll_y > 0)
+                viewport_pin.up(1)
+            else
+                row_pins[self.rows - 1].down(1);
+
+            if (maybe_pin) |extra_pin| {
+                self.has_extra_row = true;
+                row_pins[extra_y] = extra_pin;
+                const ep: *page.Page = &extra_pin.node.data;
+                const extra_rac = extra_pin.rowAndCell();
+                row_rows[extra_y] = extra_rac.row.*;
+
+                var arena = row_arenas[extra_y].promote(alloc);
+                defer row_arenas[extra_y] = arena.state;
+
+                if (row_cells[extra_y].len > 0) {
+                    _ = arena.reset(.retain_capacity);
+                    row_cells[extra_y].clearRetainingCapacity();
+                    row_sels[extra_y] = null;
+                    row_highlights[extra_y] = .empty;
+                }
+                row_dirties[extra_y] = true;
+
+                const extra_page_cells: []const page.Cell = ep.getCells(extra_rac.row);
+                const cells: *std.MultiArrayList(Cell) = &row_cells[extra_y];
+                try cells.resize(alloc, self.cols);
+                const cells_slice = cells.slice();
+                fastmem.copy(page.Cell, cells_slice.items(.raw), extra_page_cells[0..self.cols]);
+
+                if (extra_rac.row.managedMemory()) {
+                    const arena_alloc = arena.allocator();
+                    const cells_grapheme = cells_slice.items(.grapheme);
+                    const cells_style = cells_slice.items(.style);
+                    for (extra_page_cells[0..self.cols], 0..) |*pc, x| {
+                        if (pc.style_id > 0) cells_style[x] = ep.styles.get(ep.memory, pc.style_id).*;
+                        switch (pc.content_tag) {
+                            .codepoint => {},
+                            .codepoint_grapheme => {
+                                cells_grapheme[x] = try arena_alloc.dupe(
+                                    u21,
+                                    ep.lookupGrapheme(pc) orelse &.{},
+                                );
+                            },
+                            .bg_color_rgb => {
+                                cells_style[x] = .{ .bg_color = .{ .rgb = .{
+                                    .r = pc.content.color_rgb.r,
+                                    .g = pc.content.color_rgb.g,
+                                    .b = pc.content.color_rgb.b,
+                                } } };
+                            },
+                            .bg_color_palette => {
+                                cells_style[x] = .{ .bg_color = .{
+                                    .palette = pc.content.color_palette,
+                                } };
+                            },
+                        }
+                    }
+                }
+                any_dirty = true;
+            } else {
+                self.has_extra_row = false;
+            }
+        } else {
+            self.has_extra_row = false;
+            const extra_y: usize = self.rows;
+            row_dirties[extra_y] = true;
+            if (row_cells[extra_y].len > 0) {
+                var arena = row_arenas[extra_y].promote(alloc);
+                _ = arena.reset(.retain_capacity);
+                row_cells[extra_y].clearRetainingCapacity();
+                row_arenas[extra_y] = arena.state;
+            }
+        }
+
         // If our screen has a selection, then mark the rows with the
         // selection. We do this outside of the loop above because its unlikely
         // a selection exists and because the way our selections are structured
@@ -606,8 +688,8 @@ pub const RenderState = struct {
             // do this is to traverse the viewport pages and check for the
             // matching selection pages.
             for (
-                row_pins,
-                row_sels,
+                row_pins[0..self.rows],
+                row_sels[0..self.rows],
             ) |pin, *sel_bounds| {
                 const p = s.pages.pointFromPin(.screen, pin).?.screen;
                 const row_sel = sel.containedRowCached(
@@ -680,10 +762,10 @@ pub const RenderState = struct {
         const row_pins = row_data.items(.pin);
         const row_highlights_slice = row_data.items(.highlights);
         for (
-            row_arenas,
-            row_pins,
-            row_highlights_slice,
-            row_dirties,
+            row_arenas[0..self.rows],
+            row_pins[0..self.rows],
+            row_highlights_slice[0..self.rows],
+            row_dirties[0..self.rows],
         ) |*row_arena, row_pin, *row_highlights, *dirty| {
             for (hls) |hl| {
                 const chunks_slice = hl.chunks.slice();
@@ -894,7 +976,7 @@ test "styled" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 }
 
 test "basic text" {
@@ -913,11 +995,11 @@ test "basic text" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Verify we have the right number of rows
     const row_data = state.row_data.slice();
-    try testing.expectEqual(3, row_data.len);
+    try testing.expectEqual(3 + 1, row_data.len);
 
     // All rows should have cols cells
     const cells = row_data.items(.cells);
@@ -951,11 +1033,11 @@ test "styled text" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Verify we have the right number of rows
     const row_data = state.row_data.slice();
-    try testing.expectEqual(3, row_data.len);
+    try testing.expectEqual(3 + 1, row_data.len);
 
     // All rows should have cols cells
     const cells = row_data.items(.cells);
@@ -996,11 +1078,11 @@ test "grapheme" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Verify we have the right number of rows
     const row_data = state.row_data.slice();
-    try testing.expectEqual(3, row_data.len);
+    try testing.expectEqual(3 + 1, row_data.len);
 
     // All rows should have cols cells
     const cells = row_data.items(.cells);
@@ -1044,7 +1126,7 @@ test "cursor state in viewport" {
     defer state.deinit(alloc);
 
     // Initial update
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(0, state.cursor.active.x);
     try testing.expectEqual(0, state.cursor.active.y);
     try testing.expectEqual(0, state.cursor.viewport.?.x);
@@ -1054,14 +1136,14 @@ test "cursor state in viewport" {
 
     // Set a style on the cursor
     s.nextSlice("\x1b[1m"); // Bold
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expect(!state.cursor.style.default());
     try testing.expect(state.cursor.style.flags.bold);
     s.nextSlice("\x1b[0m"); // Reset style
 
     // Move cursor to 2,1
     s.nextSlice("\x1b[2;3H");
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(2, state.cursor.active.x);
     try testing.expectEqual(1, state.cursor.active.y);
     try testing.expectEqual(2, state.cursor.viewport.?.x);
@@ -1086,7 +1168,7 @@ test "cursor state out of viewport" {
     defer state.deinit(alloc);
 
     // Initial update
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(0, state.cursor.active.x);
     try testing.expectEqual(1, state.cursor.active.y);
     try testing.expectEqual(0, state.cursor.viewport.?.x);
@@ -1094,7 +1176,7 @@ test "cursor state out of viewport" {
 
     // Scroll the viewport
     t.scrollViewport(.top);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Set a style on the cursor
     try testing.expectEqual(0, state.cursor.active.x);
@@ -1119,7 +1201,7 @@ test "dirty state" {
     defer state.deinit(alloc);
 
     // First update should trigger redraw due to resize
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(.full, state.dirty);
 
     // Reset dirty flag and dirty rows
@@ -1131,17 +1213,17 @@ test "dirty state" {
     }
 
     // Second update with no changes - no dirty rows
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(.false, state.dirty);
     {
         const row_data = state.row_data.slice();
         const dirty = row_data.items(.dirty);
-        for (dirty) |d| try testing.expect(!d);
+        for (dirty[0..state.rows]) |d| try testing.expect(!d);
     }
 
     // Write to first line
     s.nextSlice("A");
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(.partial, state.dirty);
     {
         const row_data = state.row_data.slice();
@@ -1168,11 +1250,11 @@ test "colors" {
     defer state.deinit(alloc);
 
     // Default colors
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Change cursor color
     s.nextSlice("\x1b]12;#FF0000\x07");
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     const c = state.colors.cursor.?;
     try testing.expectEqual(0xFF, c.r);
@@ -1181,7 +1263,7 @@ test "colors" {
 
     // Change palette color 0 to White
     s.nextSlice("\x1b]4;0;#FFFFFF\x07");
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     const p0 = state.colors.palette[0];
     try testing.expectEqual(0xFF, p0.r);
     try testing.expectEqual(0xFF, p0.g);
@@ -1207,7 +1289,7 @@ test "selection single line" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     const row_data = state.row_data.slice();
     const sels = row_data.items(.selection);
@@ -1217,7 +1299,7 @@ test "selection single line" {
 
     // Clear the selection
     try screen.select(null);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
     try testing.expectEqual(null, sels[0]);
     try testing.expectEqual(null, sels[1]);
     try testing.expectEqual(null, sels[2]);
@@ -1242,7 +1324,7 @@ test "selection multiple lines" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     const row_data = state.row_data.slice();
     const sels = row_data.items(.selection);
@@ -1277,7 +1359,7 @@ test "linkCells" {
 
     // Create a hyperlink
     s.nextSlice("\x1b]8;;http://example.com\x1b\\LINK\x1b]8;;\x1b\\");
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Query link at 0,0
     var cells = try state.linkCells(alloc, .{ .x = 0, .y = 0 });
@@ -1311,7 +1393,7 @@ test "string" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     var w = std.Io.Writer.Allocating.init(alloc);
     defer w.deinit();
@@ -1355,7 +1437,7 @@ test "linkCells with scrollback spanning pages" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     const expected_viewport_y: usize = viewport_rows - tail_rows;
     // BUG: This crashes without the fix
@@ -1382,7 +1464,7 @@ test "linkCells with invalid viewport point" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Row out of bound
     {
@@ -1421,7 +1503,7 @@ test "dirty row resets highlights" {
 
     var state: RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Reset dirty state
     state.dirty = .false;
@@ -1454,7 +1536,7 @@ test "dirty row resets highlights" {
     // Write to row 0 to make it dirty
     s.nextSlice("\x1b[H"); // Move to home
     s.nextSlice("X");
-    try state.update(alloc, &t);
+    try state.update(alloc, &t, 0);
 
     // Verify the highlight was reset on the dirty row
     {

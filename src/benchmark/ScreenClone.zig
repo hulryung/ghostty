@@ -171,7 +171,7 @@ fn stepRender(ptr: *anyopaque) Benchmark.Error!void {
     // slowdown.
     const alloc = self.terminal.screens.active.alloc;
     var state: terminalpkg.RenderState = .empty;
-    state.update(alloc, &self.terminal) catch |err| {
+    state.update(alloc, &self.terminal, 0) catch |err| {
         log.warn("error cloning screen err={}", .{err});
         return error.BenchmarkFailed;
     };
@@ -181,7 +181,7 @@ fn stepRender(ptr: *anyopaque) Benchmark.Error!void {
     for (0..1000) |_| {
         // Forces a full rebuild because it thinks our screen changed
         state.screen = .alternate;
-        state.update(alloc, &self.terminal) catch |err| {
+        state.update(alloc, &self.terminal, 0) catch |err| {
             log.warn("error cloning screen err={}", .{err});
             return error.BenchmarkFailed;
         };

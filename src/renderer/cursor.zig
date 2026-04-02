@@ -78,7 +78,7 @@ test "cursor: default uses configured style" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &term);
+    try state.update(alloc, &term, 0);
 
     try testing.expect(style(&state, .{ .preedit = false, .focused = true, .blink_visible = true }) == .bar);
     try testing.expect(style(&state, .{ .preedit = false, .focused = false, .blink_visible = true }) == .block_hollow);
@@ -97,7 +97,7 @@ test "cursor: blinking disabled" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &term);
+    try state.update(alloc, &term, 0);
 
     try testing.expect(style(&state, .{ .focused = true, .blink_visible = true }) == .bar);
     try testing.expect(style(&state, .{ .focused = true, .blink_visible = false }) == .bar);
@@ -117,7 +117,7 @@ test "cursor: explicitly not visible" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &term);
+    try state.update(alloc, &term, 0);
 
     try testing.expect(style(&state, .{ .focused = true, .blink_visible = true }) == null);
     try testing.expect(style(&state, .{ .focused = true, .blink_visible = false }) == null);
@@ -133,7 +133,7 @@ test "cursor: always block with preedit" {
 
     var state: terminal.RenderState = .empty;
     defer state.deinit(alloc);
-    try state.update(alloc, &term);
+    try state.update(alloc, &term, 0);
 
     // In any bool state
     try testing.expect(style(&state, .{ .preedit = true, .focused = false, .blink_visible = false }) == .block);
@@ -144,7 +144,7 @@ test "cursor: always block with preedit" {
     // If we're scrolled though, then we don't show the cursor.
     for (0..100) |_| try term.index();
     term.scrollViewport(.{ .top = {} });
-    try state.update(alloc, &term);
+    try state.update(alloc, &term, 0);
 
     // In any bool state
     try testing.expect(style(&state, .{ .preedit = true, .focused = false, .blink_visible = false }) == null);

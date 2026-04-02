@@ -1200,7 +1200,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
 
                 // Update our terminal state
-                try self.terminal_state.update(self.alloc, state.terminal);
+                try self.terminal_state.update(self.alloc, state.terminal, 0);
 
                 // If our terminal state is dirty at all we need to redo
                 // the viewport search.
