@@ -131,6 +131,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         last_bottom_node: ?usize,
         last_bottom_y: terminal.size.CellCountInt,
 
+        /// Effective sub-cell scroll offset in pixels for smooth scrolling.
+        /// Computed per frame from renderer state with state checks applied.
+        pending_scroll_y: f32 = 0,
+
         /// The most recent viewport matches so that we can render search
         /// matches in the visible frame. This is provided asynchronously
         /// from the search thread so we have the dirty flag to also note
@@ -760,6 +764,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .previous_cursor_style = 0,
                     .cursor_visible = 0,
                     .cursor_change_time = 0,
+                    .pending_scroll = @splat(0),
                     .time_focus = 0,
                     .focus = 1, // assume focused initially
                     .palette = @splat(@splat(0)),
@@ -1159,6 +1164,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 preedit: ?renderer.State.Preedit,
                 scrollbar: terminal.Scrollbar,
                 overlay_features: []const Overlay.Feature,
+                pending_scroll_y: f32,
             };
 
             // Update all our data as tightly as possible within the mutex.
@@ -1199,8 +1205,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     state.terminal.scrollViewport(.bottom);
                 }
 
+                // Compute effective pending scroll Y. Clear stale offset
+                // when mouse reporting is active (app handles scroll).
+                const pending_scroll_y: f32 = pending_y: {
+                    const raw = state.mouse.pending_scroll_y;
+                    if (raw == 0) break :pending_y 0;
+                    if (state.terminal.flags.mouse_event != .none) {
+                        state.mouse.pending_scroll_y = 0;
+                        break :pending_y 0;
+                    }
+                    break :pending_y raw;
+                };
+
                 // Update our terminal state
-                try self.terminal_state.update(self.alloc, state.terminal, 0);
+                try self.terminal_state.update(self.alloc, state.terminal, pending_scroll_y);
 
                 // If our terminal state is dirty at all we need to redo
                 // the viewport search.
@@ -1276,6 +1294,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .preedit = preedit,
                     .scrollbar = scrollbar,
                     .overlay_features = overlay_features,
+                    .pending_scroll_y = pending_scroll_y,
                 };
             };
 
@@ -1299,8 +1318,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const row_data = self.terminal_state.row_data.slice();
                 var any_dirty: bool = false;
                 for (
-                    row_data.items(.highlights),
-                    row_data.items(.dirty),
+                    row_data.items(.highlights)[0..state.rows],
+                    row_data.items(.dirty)[0..state.rows],
                 ) |*highlights, *dirty| {
                     if (highlights.items.len > 0) {
                         highlights.clearRetainingCapacity();
@@ -1355,6 +1374,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 );
             };
 
+            // Store the effective smooth scroll offset for use in shaders.
+            self.pending_scroll_y = critical.pending_scroll_y;
+
             // Acquire the draw mutex for all remaining state updates.
             {
                 self.draw_mutex.lock();
@@ -1403,6 +1425,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     else => {},
                 };
+
+                // Update smooth scroll offset uniform.
+                self.uniforms.pending_scroll_y = self.pending_scroll_y;
 
                 // Prepare our overlay image for upload (or unload). This
                 // has to use our general allocator since it modifies
@@ -2219,6 +2244,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 uniforms.time_focus = uniforms.time;
                 self.custom_shader_focused_changed = false;
             }
+
+            // Pass smooth scroll offset to custom shaders.
+            uniforms.pending_scroll = .{
+                0,
+                self.pending_scroll_y,
+            };
         }
 
         /// Build the overlay as configured. Returns null if there is no
@@ -2440,6 +2471,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     log.warn("error building row y={} err={}", .{ y, err });
                     self.cells.clear(y);
                 };
+            }
+
+            // Build extra smooth scroll row and adjust grid_size.
+            if (self.pending_scroll_y != 0 and state.has_extra_row) {
+                const extra_y: terminal.size.CellCountInt = @intCast(row_len);
+                self.cells.clear(extra_y);
+                self.rebuildRow(
+                    extra_y, row_raws[row_len], &row_cells[row_len],
+                    null, row_selection[row_len], &row_highlights[row_len], links,
+                ) catch {};
+                // Include extra row in grid for shader bg color lookup.
+                self.uniforms.grid_size[1] = @intCast(row_len + 1);
+            } else {
+                self.uniforms.grid_size[1] = @intCast(row_len);
             }
 
             // Setup our cursor rendering information.
